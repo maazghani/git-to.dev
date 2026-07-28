@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { SITE_HOST, SITE_URL } from "@/lib/site"
 import { Check, Copy, Link2, Loader2, TriangleAlert } from "lucide-react"
 import { useState } from "react"
 
@@ -32,15 +33,14 @@ export function Shortener() {
     }
   }
 
-  const shortUrl =
-    result?.status === "ok" ? `${typeof window === "undefined" ? "" : window.location.host}/${result.path}` : ""
+  const shortUrl = result?.status === "ok" ? `${SITE_URL}/${result.path}` : ""
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="shorten-heading">
       <div className="flex items-center gap-2">
         <Link2 className="size-4 text-primary" aria-hidden="true" />
         <h2 id="shorten-heading" className="text-sm">
-          shortest link for a repo
+          shortest {SITE_HOST} link for a repo
         </h2>
       </div>
 
@@ -66,7 +66,9 @@ export function Shortener() {
       {result?.status === "ok" && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2">
           <div className="flex min-w-0 flex-col">
-            <code className="truncate text-sm text-foreground">/{result.path}</code>
+            <code className="truncate text-sm text-foreground">
+              {SITE_HOST}/{result.path}
+            </code>
             <span className="truncate font-sans text-xs text-muted-foreground">resolves to {result.fullName}</span>
           </div>
           <Button

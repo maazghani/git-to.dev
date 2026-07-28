@@ -30,7 +30,7 @@ function headers() {
   const h: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "git-hb-fuzzy-resolver",
+    "User-Agent": "git-to.dev-fuzzy-resolver",
   }
   if (token) h.Authorization = `Bearer ${token}`
   return h

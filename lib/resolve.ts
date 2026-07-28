@@ -22,8 +22,8 @@ export type Resolution =
   | { status: "miss"; query: string; reason: string }
   | { status: "rate-limited"; query: string; reason: string }
 
-const MAX_OWNERS_EXAMINED = 12
-const FETCH_CONCURRENCY = 6
+const MAX_OWNERS_EXAMINED = 10
+const SHORTEST_OWNERS_KEPT = 4
 
 type ScoredOwner = { owner: Owner; s: Scored }
 
@@ -50,6 +50,22 @@ async function rankOwners(fragment: string, includePopular: boolean): Promise<Sc
   }
   scored.sort((a, b) => compareScored({ s: a.s, name: a.owner.login }, { s: b.s, name: b.owner.login }))
   return scored
+}
+
+/**
+ * Which owners are worth fetching repos for. Ranked order is kind-first, so a
+ * long list of `oai*` prefix owners could bury `openai` (a subsequence match)
+ * past the examine cap — the shortest logins overall are always kept in play so
+ * the least-padded pair still gets a chance to win.
+ */
+function selectCandidates(ranked: ScoredOwner[]): ScoredOwner[] {
+  const head = ranked.slice(0, MAX_OWNERS_EXAMINED)
+  const chosen = new Set(head.map((c) => c.owner.login.toLowerCase()))
+  const shortest = [...ranked]
+    .sort((a, b) => a.owner.login.length - b.owner.login.length || a.owner.login.localeCompare(b.owner.login))
+    .filter((c) => !chosen.has(c.owner.login.toLowerCase()))
+    .slice(0, SHORTEST_OWNERS_KEPT)
+  return [...head, ...shortest]
 }
 
 function rankRepos(fragment: string, repos: Repo[]): { repo: Repo; s: Scored }[] {
@@ -96,14 +112,11 @@ async function bestPairMatch(
   seen: Set<string>,
 ): Promise<{ match: RepoHit; alternates: RepoHit[] } | null> {
   const pairs: { hit: RepoHit; rankSum: number; totalLength: number }[] = []
-  let examined = 0
 
-  for (const cand of owners) {
+  for (const cand of selectCandidates(owners)) {
     const key = cand.owner.login.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    if (examined >= MAX_OWNERS_EXAMINED) break
-    examined++
 
     let repos = await listRepos(cand.owner.login)
     let ranked = rankRepos(repoFragment, repos)
@@ -144,7 +157,11 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
   }
 
   try {
-    const ranked = await rankOwners(ownerFragment, false)
+    // Two-segment queries always consider the well-known-owner pool up front:
+    // GitHub's index can't return `openai` for `oai`, and if that candidate only
+    // showed up after every `oai*` owner failed, `oaix/musicbox` would win a
+    // race `openai/codex` should win on total length.
+    const ranked = await rankOwners(ownerFragment, Boolean(repoFragment))
 
     if (!repoFragment) {
       const pool = ranked.length ? ranked : await rankOwners(ownerFragment, true)
@@ -172,9 +189,9 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
     let result = await bestPairMatch(ranked, repoFragment, seen)
 
     if (!result) {
-      // Second pass: bring in well-known owners for subsequence hits (oai -> openai)
-      const widened = await rankOwners(ownerFragment, true)
-      result = await bestPairMatch(widened, repoFragment, seen)
+      // Nobody in the first batch of owners held a matching repo — walk the next batch.
+      const rest = ranked.filter((c) => !seen.has(c.owner.login.toLowerCase()))
+      if (rest.length) result = await bestPairMatch(rest, repoFragment, seen)
     }
 
     if (!result) {

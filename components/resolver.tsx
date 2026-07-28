@@ -2,9 +2,9 @@
 
 import { FuzzyText } from "@/components/fuzzy-text"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import type { Resolution } from "@/lib/resolve"
-import { ArrowUpRight, Check, Copy, CornerDownLeft, Loader2, Search, TriangleAlert } from "lucide-react"
+import { SITE_HOST, SITE_URL } from "@/lib/site"
+import { ArrowUpRight, Check, Copy, CornerDownLeft, Loader2, TriangleAlert } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
@@ -54,7 +54,7 @@ export function Resolver() {
   }, [debounced])
 
   const [ownerFrag = "", repoFrag = ""] = debounced.replace(/^\/+/, "").split("/")
-  const shortLink = result && result.status === "hit" ? `${host()}/${debounced.replace(/^\/+/, "")}` : ""
+  const shortLink = result && result.status === "hit" ? `${SITE_URL}/${debounced.replace(/^\/+/, "")}` : ""
 
   return (
     <section className="flex flex-col gap-4" aria-labelledby="resolve-heading">
@@ -62,11 +62,9 @@ export function Resolver() {
         Resolve a fuzzy repo path
       </h2>
 
-      <div className="relative">
-        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">
-          <Search className="size-4" aria-hidden="true" />
-        </span>
-        <Input
+      <div className="flex h-14 items-center gap-2 rounded-xl border border-border bg-card px-4 shadow-sm focus-within:border-primary">
+        <span className="shrink-0 text-sm text-muted-foreground select-none">{SITE_HOST}/</span>
+        <input
           ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -79,9 +77,9 @@ export function Resolver() {
           autoComplete="off"
           aria-label="Fuzzy repo path, for example maaz/ks"
           placeholder="maaz/ks"
-          className="h-14 rounded-xl border-border bg-card pl-11 pr-28 font-mono text-base md:text-lg shadow-sm"
+          className="h-full min-w-0 flex-1 bg-transparent font-mono text-base text-foreground outline-none placeholder:text-muted-foreground/60 md:text-lg"
         />
-        <span className="pointer-events-none absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground">
+        <span className="pointer-events-none flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {loading ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           ) : (
@@ -105,7 +103,7 @@ export function Resolver() {
             }}
             className="rounded-md border border-border bg-secondary px-2 py-1 text-secondary-foreground transition-colors hover:border-primary hover:text-primary"
           >
-            /{ex}
+            {ex}
           </button>
         ))}
       </div>
@@ -137,6 +135,9 @@ export function Resolver() {
                   <span className="text-muted-foreground">/</span>
                   <FuzzyText fragment={repoFrag} text={result.match.repo} />
                 </div>
+                <p className="truncate text-xs text-primary">
+                  {SITE_HOST}/{debounced.replace(/^\/+/, "")}
+                </p>
                 {result.match.description && (
                   <p className="truncate font-sans text-sm leading-relaxed text-muted-foreground">
                     {result.match.description}
@@ -165,11 +166,12 @@ export function Resolver() {
                 >
                   {copied ? <Check className="size-4" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
                 </Button>
-                <Button asChild size="sm">
-                  <a href={result.match.url} target="_blank" rel="noreferrer noopener">
-                    open
-                    <ArrowUpRight className="size-4" aria-hidden="true" />
-                  </a>
+                <Button
+                  size="sm"
+                  render={<a href={result.match.url} target="_blank" rel="noreferrer noopener" />}
+                >
+                  open
+                  <ArrowUpRight className="size-4" aria-hidden="true" />
                 </Button>
               </div>
             </div>
@@ -219,11 +221,13 @@ export function Resolver() {
                 add a second segment to reach a repo, e.g. /{result.owner.login.slice(0, ownerFrag.length)}/re
               </p>
             </div>
-            <Button asChild size="sm" variant="outline">
-              <a href={result.owner.url} target="_blank" rel="noreferrer noopener">
-                profile
-                <ArrowUpRight className="size-4" aria-hidden="true" />
-              </a>
+            <Button
+              size="sm"
+              variant="outline"
+              render={<a href={result.owner.url} target="_blank" rel="noreferrer noopener" />}
+            >
+              profile
+              <ArrowUpRight className="size-4" aria-hidden="true" />
             </Button>
           </div>
         </div>
@@ -237,9 +241,4 @@ export function Resolver() {
       )}
     </section>
   )
-}
-
-function host() {
-  if (typeof window === "undefined") return ""
-  return window.location.host
 }

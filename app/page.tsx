@@ -1,6 +1,7 @@
 import { Resolver } from "@/components/resolver"
 import { Shortener } from "@/components/shortener"
 import { hasToken } from "@/lib/github"
+import { SITE_HOST } from "@/lib/site"
 import { GitBranch } from "lucide-react"
 import { Suspense } from "react"
 
@@ -15,17 +16,21 @@ export default function Page() {
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-3xl flex-col gap-10 px-5 py-12 md:py-20">
       <header className="flex flex-col gap-4">
-        <div className="flex items-center gap-2 text-sm text-primary">
-          <GitBranch className="size-4" aria-hidden="true" />
-          git-hb
+        <div className="flex items-center gap-2 text-sm">
+          <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <GitBranch className="size-3.5" aria-hidden="true" />
+          </span>
+          <span className="text-foreground">
+            git-to<span className="text-primary">.dev</span>
+          </span>
         </div>
         <h1 className="text-balance text-3xl leading-tight tracking-tight md:text-4xl">
           the shortest link to any <span className="text-primary">GitHub repo</span>
         </h1>
         <p className="max-w-xl text-pretty font-sans text-base leading-relaxed text-muted-foreground">
           Type the fewest characters that uniquely identify an owner and a repo. Hitting the path redirects
-          straight to GitHub, so <code className="text-foreground">/maaz/ks</code> is a shareable link to{" "}
-          <code className="text-foreground">github.com/maazghani/ksailnet</code>.
+          straight to GitHub, so <code className="text-foreground">{SITE_HOST}/maaz/ks</code> is a shareable link
+          to <code className="text-foreground">github.com/maazghani/ksailnet</code>.
         </p>
       </header>
 
@@ -41,7 +46,8 @@ export default function Page() {
         </h2>
         <ol className="flex flex-col gap-3 font-sans text-sm leading-relaxed text-muted-foreground">
           <li>
-            <span className="text-foreground">1. Owners first.</span> Candidates come from an exact login lookup,
+            <span className="text-foreground">1. Owners first.</span>{" "}
+            Candidates come from an exact login lookup,
             GitHub&apos;s user index, and a cached pool of the most-starred owners (GitHub&apos;s index can&apos;t
             return <code>openai</code> for <code>oai</code>, so that pool covers it).
           </li>
