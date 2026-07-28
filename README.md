@@ -24,6 +24,33 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Docker
+
+Build and run the production image:
+
+```bash
+docker build -t git-to-dev .
+docker run --rm -p 3000:3000 git-to-dev
+```
+
+The image uses Next.js standalone output and runs as an unprivileged user. To use
+authenticated GitHub API requests, pass a token when starting the container:
+
+```bash
+docker run --rm -p 3000:3000 -e GITHUB_TOKEN git-to-dev
+```
+
+## Development container
+
+Open the repository in a [Development Containers](https://containers.dev/)
+compatible editor and choose **Reopen in Container**. The development container
+builds the `development` target from the same `Dockerfile`, installs the locked
+dependencies, and forwards port 3000. Start the app from its terminal with:
+
+```bash
+pnpm dev
+```
+
 ## Learn More
 
 To learn more, take a look at the following resources:
