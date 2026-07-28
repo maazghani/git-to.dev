@@ -4,7 +4,7 @@ import { FuzzyText } from "@/components/fuzzy-text"
 import { Button } from "@/components/ui/button"
 import type { Resolution } from "@/lib/resolve"
 import { SITE_HOST, SITE_URL } from "@/lib/site"
-import { ArrowUpRight, Check, Copy, CornerDownLeft, Loader2, TriangleAlert } from "lucide-react"
+import { ArrowUpRight, Check, Copy, CornerDownLeft, Loader2, Search, TriangleAlert } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 
@@ -62,8 +62,9 @@ export function Resolver() {
         Resolve a fuzzy repo path
       </h2>
 
-      <div className="flex h-14 items-center gap-2 rounded-xl border border-border bg-card px-4 shadow-sm focus-within:border-primary">
-        <span className="shrink-0 text-sm text-muted-foreground select-none">{SITE_HOST}/</span>
+      <div className="flex h-12 items-center gap-2.5 rounded-lg border border-border bg-card px-4 transition-colors focus-within:border-ring">
+        <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <span className="shrink-0 select-none font-mono text-sm text-muted-foreground">{SITE_HOST}/</span>
         <input
           ref={inputRef}
           value={value}
@@ -77,9 +78,9 @@ export function Resolver() {
           autoComplete="off"
           aria-label="Fuzzy repo path, for example maaz/ks"
           placeholder="maaz/ks"
-          className="h-full min-w-0 flex-1 bg-transparent font-mono text-base text-foreground outline-none placeholder:text-muted-foreground/60 md:text-lg"
+          className="h-full min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
         />
-        <span className="pointer-events-none flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="pointer-events-none flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           {loading ? (
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           ) : (
@@ -91,7 +92,7 @@ export function Resolver() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
         <span>try</span>
         {EXAMPLES.map((ex) => (
           <button
@@ -101,7 +102,7 @@ export function Resolver() {
               setValue(ex)
               inputRef.current?.focus()
             }}
-            className="rounded-md border border-border bg-secondary px-2 py-1 text-secondary-foreground transition-colors hover:border-primary hover:text-primary"
+            className="rounded-md border border-border px-2 py-1 font-mono transition-colors hover:border-ring hover:text-foreground"
           >
             {ex}
           </button>
@@ -119,7 +120,7 @@ export function Resolver() {
 
       {result?.status === "hit" && (
         <div className="flex flex-col gap-3">
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-4">
             <div className="flex items-start gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -135,7 +136,7 @@ export function Resolver() {
                   <span className="text-muted-foreground">/</span>
                   <FuzzyText fragment={repoFrag} text={result.match.repo} />
                 </div>
-                <p className="truncate text-xs text-primary">
+                <p className="truncate font-mono text-xs text-muted-foreground">
                   {SITE_HOST}/{debounced.replace(/^\/+/, "")}
                 </p>
                 {result.match.description && (
@@ -146,7 +147,7 @@ export function Resolver() {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   <Stars count={result.match.stars} />
                   {result.match.language && <span className="text-muted-foreground">{result.match.language}</span>}
-                  <span className="text-primary/80">
+                  <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                     {result.match.ownerKind} + {result.match.repoKind}
                   </span>
                   {result.match.archived && <span className="text-muted-foreground">archived</span>}
@@ -171,7 +172,7 @@ export function Resolver() {
                   nativeButton={false}
                   render={<a href={result.match.url} target="_blank" rel="noreferrer noopener" />}
                 >
-                  open
+                  Open
                   <ArrowUpRight className="size-4" aria-hidden="true" />
                 </Button>
               </div>
@@ -206,7 +207,7 @@ export function Resolver() {
       )}
 
       {result?.status === "owner" && (
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -228,7 +229,7 @@ export function Resolver() {
               nativeButton={false}
               render={<a href={result.owner.url} target="_blank" rel="noreferrer noopener" />}
             >
-              profile
+              Profile
               <ArrowUpRight className="size-4" aria-hidden="true" />
             </Button>
           </div>
@@ -236,7 +237,7 @@ export function Resolver() {
       )}
 
       {result && (result.status === "miss" || result.status === "rate-limited") && !loading && (
-        <p className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        <p className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
           <TriangleAlert className="size-4 shrink-0 text-destructive" aria-hidden="true" />
           {result.reason}
         </p>

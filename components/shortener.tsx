@@ -36,11 +36,11 @@ export function Shortener() {
   const shortUrl = result?.status === "ok" ? `${SITE_URL}/${result.path}` : ""
 
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-labelledby="shorten-heading">
+    <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4" aria-labelledby="shorten-heading">
       <div className="flex items-center gap-2">
-        <Link2 className="size-4 text-primary" aria-hidden="true" />
-        <h2 id="shorten-heading" className="text-sm">
-          shortest {SITE_HOST} link for a repo
+        <Link2 className="size-4 text-muted-foreground" aria-hidden="true" />
+        <h2 id="shorten-heading" className="text-sm tracking-tight">
+          Shortest {SITE_HOST} link for a repo
         </h2>
       </div>
 
@@ -59,17 +59,17 @@ export function Shortener() {
           className="h-11 flex-1 border-border bg-background font-mono text-sm"
         />
         <Button type="submit" className="h-11" disabled={loading || !value.trim()}>
-          {loading ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "shorten"}
+          {loading ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : "Shorten"}
         </Button>
       </form>
 
       {result?.status === "ok" && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary px-3 py-2">
           <div className="flex min-w-0 flex-col">
-            <code className="truncate text-sm text-foreground">
+            <code className="truncate font-mono text-sm text-foreground">
               {SITE_HOST}/{result.path}
             </code>
-            <span className="truncate font-sans text-xs text-muted-foreground">resolves to {result.fullName}</span>
+            <span className="truncate text-xs text-muted-foreground">resolves to {result.fullName}</span>
           </div>
           <Button
             type="button"
