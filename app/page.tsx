@@ -52,12 +52,13 @@ export default function Page() {
             return <code>openai</code> for <code>oai</code>, so that pool covers it).
           </li>
           <li>
-            <span className="text-foreground">2. Shortest name wins.</span> Candidates are ordered by match quality,
-            then strictly by name length — never by popularity — so the least-padded name is the answer.
+            <span className="text-foreground">2. Whole pairs are scored, not owners.</span> Both halves are matched
+            together, so an owner that looks weaker on its own still wins when it holds the tighter repo match.
           </li>
           <li>
-            <span className="text-foreground">3. First owner with a repo hit takes it.</span> Owners are walked in
-            that order; the first one holding a repo that matches the second segment resolves the link.
+            <span className="text-foreground">3. Tightest match, then shortest.</span> Pairs rank by match quality
+            first, then by fewest total characters. Stars only break an exact tie — forks and archived repos are
+            never penalized.
           </li>
           <li>
             <span className="text-foreground">4. Extra segments pass through.</span>{" "}

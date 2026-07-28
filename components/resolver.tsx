@@ -168,6 +168,7 @@ export function Resolver() {
                 </Button>
                 <Button
                   size="sm"
+                  nativeButton={false}
                   render={<a href={result.match.url} target="_blank" rel="noreferrer noopener" />}
                 >
                   open
@@ -224,6 +225,7 @@ export function Resolver() {
             <Button
               size="sm"
               variant="outline"
+              nativeButton={false}
               render={<a href={result.owner.url} target="_blank" rel="noreferrer noopener" />}
             >
               profile

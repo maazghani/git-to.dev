@@ -98,8 +98,7 @@ function rankRepos(fragment: string, repos: Repo[]): { repo: Repo; s: Scored }[]
   scored.sort((a, b) => {
     const base = compareScored({ s: a.s, name: a.repo.name }, { s: b.s, name: b.repo.name })
     if (base !== 0) return base
-    if (a.repo.fork !== b.repo.fork) return a.repo.fork ? 1 : -1
-    if (a.repo.archived !== b.repo.archived) return a.repo.archived ? 1 : -1
+    // Forks and archived repos are not penalized — structure decides, stars only tie-break.
     return b.repo.stargazers_count - a.repo.stargazers_count
   })
   return scored
@@ -201,12 +200,13 @@ async function bestPairMatch(
 
   if (!pairs.size) return null
 
+  // Ranking order, strictly: match tightness, then fewest total characters, then
+  // stars purely to break exact ties. No popularity boost, no fork/archive penalty.
   const ordered = [...pairs.values()].sort((a, b) => {
     if (a.rankSum !== b.rankSum) return a.rankSum - b.rankSum
     if (a.totalLength !== b.totalLength) return a.totalLength - b.totalLength
-    if (a.hit.fork !== b.hit.fork) return a.hit.fork ? 1 : -1
-    if (a.hit.archived !== b.hit.archived) return a.hit.archived ? 1 : -1
-    return b.hit.stars - a.hit.stars
+    if (a.hit.stars !== b.hit.stars) return b.hit.stars - a.hit.stars
+    return a.hit.fullName.localeCompare(b.hit.fullName)
   })
 
   return { match: ordered[0].hit, alternates: ordered.slice(1, 7).map((p) => p.hit) }
