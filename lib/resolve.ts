@@ -1,5 +1,15 @@
 import { compareScored, matchKind, score, type MatchKind, type Scored } from "@/lib/fuzzy"
-import { getOwner, listRepos, popularOwners, RateLimited, searchOwners, searchRepos, type Owner, type Repo } from "@/lib/github"
+import {
+  getOwner,
+  listRepos,
+  popularOwners,
+  RateLimited,
+  searchOwners,
+  searchRepos,
+  searchReposForOwners,
+  type Owner,
+  type Repo,
+} from "@/lib/github"
 
 export type RepoHit = {
   owner: string
@@ -22,8 +32,16 @@ export type Resolution =
   | { status: "miss"; query: string; reason: string }
   | { status: "rate-limited"; query: string; reason: string }
 
-const MAX_OWNERS_EXAMINED = 10
-const SHORTEST_OWNERS_KEPT = 4
+/** Owners whose repo list gets fetched per pass. Each costs one cheap REST call. */
+const MAX_OWNERS_EXAMINED = 30
+/** Extra owners pulled in purely for having short logins, whatever their match kind. */
+const SHORTEST_OWNERS_KEPT = 10
+const FETCH_CONCURRENCY = 8
+/** Owners covered by the cheap batched-search pass, beyond the deep ones. */
+const MAX_OWNERS_SEARCHED = 144
+/** Logins per search query — GitHub caps the query string, so keep chunks small. */
+const SEARCH_BATCH = 12
+const SEARCH_CONCURRENCY = 6
 
 type ScoredOwner = { owner: Owner; s: Scored }
 
@@ -53,19 +71,22 @@ async function rankOwners(fragment: string, includePopular: boolean): Promise<Sc
 }
 
 /**
- * Which owners are worth fetching repos for. Ranked order is kind-first, so a
- * long list of `oai*` prefix owners could bury `openai` (a subsequence match)
- * past the examine cap — the shortest logins overall are always kept in play so
- * the least-padded pair still gets a chance to win.
+ * Owners worth a full repo-list fetch. This is the only pass that can match a
+ * repo fragment as a *subsequence* (`cx` -> `codex`), which GitHub's search
+ * index cannot do, so it deliberately includes short and well-known logins even
+ * when they rank below a wall of literal prefix matches.
  */
-function selectCandidates(ranked: ScoredOwner[]): ScoredOwner[] {
-  const head = ranked.slice(0, MAX_OWNERS_EXAMINED)
-  const chosen = new Set(head.map((c) => c.owner.login.toLowerCase()))
-  const shortest = [...ranked]
+function selectDeepOwners(ranked: ScoredOwner[]): ScoredOwner[] {
+  const picked = new Map<string, ScoredOwner>()
+  const add = (c: ScoredOwner) => picked.set(c.owner.login.toLowerCase(), c)
+
+  for (const c of ranked.slice(0, MAX_OWNERS_EXAMINED)) add(c)
+  for (const c of [...ranked]
     .sort((a, b) => a.owner.login.length - b.owner.login.length || a.owner.login.localeCompare(b.owner.login))
-    .filter((c) => !chosen.has(c.owner.login.toLowerCase()))
-    .slice(0, SHORTEST_OWNERS_KEPT)
-  return [...head, ...shortest]
+    .slice(0, SHORTEST_OWNERS_KEPT))
+    add(c)
+
+  return [...picked.values()]
 }
 
 function rankRepos(fragment: string, repos: Repo[]): { repo: Repo; s: Scored }[] {
@@ -111,32 +132,76 @@ async function bestPairMatch(
   repoFragment: string,
   seen: Set<string>,
 ): Promise<{ match: RepoHit; alternates: RepoHit[] } | null> {
-  const pairs: { hit: RepoHit; rankSum: number; totalLength: number }[] = []
+  const byLogin = new Map(owners.map((c) => [c.owner.login.toLowerCase(), c]))
+  const pairs = new Map<string, { hit: RepoHit; rankSum: number; totalLength: number }>()
 
-  for (const cand of selectCandidates(owners)) {
-    const key = cand.owner.login.toLowerCase()
-    if (seen.has(key)) continue
+  const addPair = (cand: ScoredOwner, repo: Repo, s: Scored) => {
+    const key = repo.full_name.toLowerCase()
+    if (pairs.has(key)) return
+    pairs.set(key, {
+      hit: toHit(repo, cand.s.kind, s.kind),
+      rankSum: cand.s.rank + s.rank,
+      totalLength: cand.owner.login.length + repo.name.length,
+    })
+  }
+
+  const deep = selectDeepOwners(owners).filter((c) => {
+    const key = c.owner.login.toLowerCase()
+    if (seen.has(key)) return false
     seen.add(key)
+    return true
+  })
 
-    let repos = await listRepos(cand.owner.login)
-    let ranked = rankRepos(repoFragment, repos)
-    if (!ranked.length && repos.length >= 300) {
-      repos = await searchRepos(cand.owner.login, repoFragment)
-      ranked = rankRepos(repoFragment, repos)
-    }
-
-    for (const r of ranked.slice(0, 3)) {
-      pairs.push({
-        hit: toHit(r.repo, cand.s.kind, r.s.kind),
-        rankSum: cand.s.rank + r.s.rank,
-        totalLength: cand.owner.login.length + r.repo.name.length,
-      })
+  // Pass 1 (deep): full repo lists for the strongest owners. Local scoring here
+  // is what makes subsequence repo matches possible. Bounded-parallel so a
+  // 30-owner scan costs one round trip, not thirty.
+  for (let i = 0; i < deep.length; i += FETCH_CONCURRENCY) {
+    const batch = deep.slice(i, i + FETCH_CONCURRENCY)
+    const results = await Promise.all(
+      batch.map(async (cand) => {
+        let repos = await listRepos(cand.owner.login)
+        let ranked = rankRepos(repoFragment, repos)
+        // Only dig past the first 100 repos when the shallow page came up empty.
+        if (!ranked.length && repos.length >= 100) {
+          repos = await listRepos(cand.owner.login, 3)
+          ranked = rankRepos(repoFragment, repos)
+          if (!ranked.length && repos.length >= 300) {
+            ranked = rankRepos(repoFragment, await searchRepos(cand.owner.login, repoFragment))
+          }
+        }
+        return { cand, ranked }
+      }),
+    )
+    for (const { cand, ranked } of results) {
+      for (const r of ranked.slice(0, 3)) addPair(cand, r.repo, r.s)
     }
   }
 
-  if (!pairs.length) return null
+  // Pass 2 (wide): every remaining owner, ~12 per search request. Catches the
+  // owner that ranks 40th on login length but holds the tightest repo match —
+  // `maazghani/ksailnet` for `maaz/ks` — without a fetch per owner.
+  const rest = owners
+    .filter((c) => !deep.some((d) => d.owner.login.toLowerCase() === c.owner.login.toLowerCase()))
+    .slice(0, MAX_OWNERS_SEARCHED)
 
-  pairs.sort((a, b) => {
+  for (let i = 0; i < rest.length; i += SEARCH_BATCH * SEARCH_CONCURRENCY) {
+    const window = rest.slice(i, i + SEARCH_BATCH * SEARCH_CONCURRENCY)
+    const chunks: ScoredOwner[][] = []
+    for (let j = 0; j < window.length; j += SEARCH_BATCH) chunks.push(window.slice(j, j + SEARCH_BATCH))
+
+    const found = await Promise.all(
+      chunks.map((chunk) => searchReposForOwners(chunk.map((c) => c.owner.login), repoFragment)),
+    )
+    for (const repos of found.flat()) {
+      const cand = byLogin.get(repos.owner.login.toLowerCase())
+      const s = score(repoFragment, repos.name)
+      if (cand && s) addPair(cand, repos, s)
+    }
+  }
+
+  if (!pairs.size) return null
+
+  const ordered = [...pairs.values()].sort((a, b) => {
     if (a.rankSum !== b.rankSum) return a.rankSum - b.rankSum
     if (a.totalLength !== b.totalLength) return a.totalLength - b.totalLength
     if (a.hit.fork !== b.hit.fork) return a.hit.fork ? 1 : -1
@@ -144,7 +209,7 @@ async function bestPairMatch(
     return b.hit.stars - a.hit.stars
   })
 
-  return { match: pairs[0].hit, alternates: pairs.slice(1, 7).map((p) => p.hit) }
+  return { match: ordered[0].hit, alternates: ordered.slice(1, 7).map((p) => p.hit) }
 }
 
 export async function resolvePath(ownerFragment: string, repoFragment?: string): Promise<Resolution> {

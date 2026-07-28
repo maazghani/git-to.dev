@@ -68,22 +68,50 @@ export async function getOwner(login: string): Promise<Owner | null> {
   return gh<Owner>(`/users/${login}`, 86400)
 }
 
-export async function searchOwners(fragment: string, perPage = 100): Promise<Owner[]> {
+/**
+ * Owners whose login contains the fragment. Two pages deep because GitHub orders
+ * by its own relevance, not by login length — the shortest login that matches
+ * (which is what this resolver ranks on) is often well past the first page.
+ */
+export async function searchOwners(fragment: string, pages = 2): Promise<Owner[]> {
   const q = encodeURIComponent(`${fragment} in:login`)
-  const data = await gh<{ items: Owner[] }>(`/search/users?q=${q}&per_page=${perPage}`, 3600)
-  return data?.items ?? []
+  const out: Owner[] = []
+  for (let page = 1; page <= pages; page++) {
+    const data = await gh<{ items: Owner[]; total_count: number }>(
+      `/search/users?q=${q}&per_page=100&page=${page}`,
+      3600,
+    )
+    if (!data?.items?.length) break
+    out.push(...data.items)
+    if (data.items.length < 100) break
+  }
+  return out
 }
 
-/** Every repo an owner has, capped at 3 pages (300 repos), newest activity first. */
-export async function listRepos(login: string): Promise<Repo[]> {
+/** An owner's repos, newest activity first. One page (100) unless more is asked for. */
+export async function listRepos(login: string, pages = 1): Promise<Repo[]> {
   const out: Repo[] = []
-  for (let page = 1; page <= 3; page++) {
+  for (let page = 1; page <= pages; page++) {
     const data = await gh<Repo[]>(`/users/${login}/repos?per_page=100&sort=pushed&page=${page}`, 3600)
     if (!data?.length) break
     out.push(...data)
     if (data.length < 100) break
   }
   return out
+}
+
+/**
+ * One search request that probes many owners at once. GitHub ORs repeated
+ * `user:` qualifiers, so a single query answers "which of these owners has a
+ * repo whose name contains the fragment" — the difference between one request
+ * per candidate owner and one request per ~12 candidates.
+ */
+export async function searchReposForOwners(logins: string[], fragment: string): Promise<Repo[]> {
+  if (!logins.length) return []
+  const users = logins.map((l) => `user:${l}`).join(" ")
+  const q = encodeURIComponent(`${fragment} in:name ${users}`)
+  const data = await gh<{ items: Repo[] }>(`/search/repositories?q=${q}&per_page=100`, 3600)
+  return data?.items ?? []
 }
 
 /** Fallback when a repo is outside the first 300: let GitHub's index find it. */
