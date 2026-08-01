@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   getOwner,
+  getRepo,
   listRepos,
   popularOwners,
   RateLimited,
@@ -18,6 +19,7 @@ vi.mock("@/lib/github", async (importOriginal) => {
   return {
     ...actual,
     getOwner: vi.fn(),
+    getRepo: vi.fn(),
     listRepos: vi.fn(),
     popularOwners: vi.fn(),
     searchOwners: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("@/lib/github", async (importOriginal) => {
 })
 
 const getOwnerMock = vi.mocked(getOwner)
+const getRepoMock = vi.mocked(getRepo)
 const listReposMock = vi.mocked(listRepos)
 const popularOwnersMock = vi.mocked(popularOwners)
 const searchOwnersMock = vi.mocked(searchOwners)
@@ -58,6 +61,7 @@ function makeRepo(ownerLogin: string, name: string, stars = 0, overrides: Partia
 beforeEach(() => {
   vi.resetAllMocks()
   getOwnerMock.mockResolvedValue(null)
+  getRepoMock.mockResolvedValue(null)
   listReposMock.mockResolvedValue([])
   popularOwnersMock.mockResolvedValue([])
   searchOwnersMock.mockResolvedValue([])
@@ -171,9 +175,27 @@ describe("resolvePath", () => {
       reason: "GitHub API rate limit reached. Add a GITHUB_TOKEN environment variable to raise the limit.",
     })
   })
+
+  it("resolves an exact repository without using GitHub search", async () => {
+    getRepoMock.mockResolvedValue(makeRepo("openai", "codex", 100_000))
+
+    const result = await resolvePath("openai", "codex")
+
+    expect(result.status).toBe("hit")
+    if (result.status !== "hit") throw new Error("Expected a repository hit")
+    expect(result.match.fullName).toBe("openai/codex")
+    expect(result.match.ownerKind).toBe("exact")
+    expect(result.match.repoKind).toBe("exact")
+    expect(searchOwnersMock).not.toHaveBeenCalled()
+    expect(searchReposForOwnersMock).not.toHaveBeenCalled()
+  })
 })
 
 describe("shortestPath", () => {
+  beforeEach(() => {
+    getRepoMock.mockImplementation(async (owner, repo) => makeRepo(owner, repo))
+  })
+
   it("returns the first owner and repo prefixes that resolve to the target", async () => {
     searchOwnersMock.mockResolvedValue([makeOwner("acme")])
     listReposMock.mockResolvedValue([makeRepo("acme", "widget")])
@@ -185,5 +207,52 @@ describe("shortestPath", () => {
       path: "a/w",
       fullName: "acme/widget",
     })
+  })
+
+  it("does not spend wide-search quota on prefixes where the target already loses", async () => {
+    const wideOwners = Array.from({ length: 50 }, (_, index) => makeOwner(`acandidate${index}`))
+    searchOwnersMock.mockResolvedValue([makeOwner("aa"), makeOwner("acme"), ...wideOwners])
+    listReposMock.mockImplementation(async (login) => {
+      if (login === "aa") return [makeRepo("aa", "w")]
+      if (login === "acme") return [makeRepo("acme", "widget")]
+      return []
+    })
+
+    await expect(shortestPath("acme", "widget")).resolves.toMatchObject({
+      status: "ok",
+      path: "a/wi",
+      fullName: "acme/widget",
+    })
+
+    expect(searchReposForOwnersMock).toHaveBeenCalled()
+    expect(searchReposForOwnersMock.mock.calls.every(([, fragment]) => fragment === "wi")).toBe(true)
+  })
+
+  it("falls back to the exact path when pair matching reaches the search limit", async () => {
+    const wideOwners = Array.from({ length: 50 }, (_, index) => makeOwner(`acandidate${index}`))
+    searchOwnersMock.mockResolvedValue([makeOwner("acme"), ...wideOwners])
+    listReposMock.mockImplementation(async (login) => (
+      login === "acme" ? [makeRepo("acme", "widget")] : []
+    ))
+    searchReposForOwnersMock.mockRejectedValue(new RateLimited())
+
+    await expect(shortestPath("acme", "widget")).resolves.toEqual({
+      status: "ok",
+      owner: "acme",
+      repo: "widget",
+      path: "acme/widget",
+      fullName: "acme/widget",
+      limited: true,
+    })
+  })
+
+  it("rejects a repository that does not exist", async () => {
+    getRepoMock.mockResolvedValue(null)
+
+    await expect(shortestPath("acme", "missing")).resolves.toEqual({
+      status: "miss",
+      reason: "GitHub repository acme/missing was not found.",
+    })
+    expect(searchOwnersMock).not.toHaveBeenCalled()
   })
 })

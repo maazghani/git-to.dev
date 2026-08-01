@@ -7,7 +7,7 @@ import { Check, Copy, Link2, Loader2, TriangleAlert } from "lucide-react"
 import { useState } from "react"
 
 type Result =
-  | { status: "ok"; owner: string; repo: string; path: string; fullName: string }
+  | { status: "ok"; owner: string; repo: string; path: string; fullName: string; limited?: true }
   | { status: "miss"; reason: string }
   | { status: "idle" }
 
@@ -25,7 +25,9 @@ export function Shortener() {
     setResult(null)
     try {
       const res = await fetch(`/api/shorten?repo=${encodeURIComponent(repo)}`)
-      setResult((await res.json()) as Result)
+      const data = (await res.json().catch(() => null)) as Result | null
+      if (!res.ok || !data) throw new Error("Invalid shortener response")
+      setResult(data)
     } catch {
       setResult({ status: "miss", reason: "Lookup failed" })
     } finally {
@@ -69,7 +71,9 @@ export function Shortener() {
             <code className="truncate font-mono text-sm text-foreground">
               {SITE_HOST}/{result.path}
             </code>
-            <span className="truncate text-xs text-muted-foreground">resolves to {result.fullName}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {result.limited ? "Search quota limited; using the exact path" : `resolves to ${result.fullName}`}
+            </span>
           </div>
           <Button
             type="button"
