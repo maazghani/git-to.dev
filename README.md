@@ -49,6 +49,7 @@ pnpm dev
 ## Learn More
 
 ```bash
+pnpm test
 pnpm lint
 pnpm build
 ```

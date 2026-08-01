@@ -68,6 +68,12 @@ export async function getOwner(login: string): Promise<Owner | null> {
   return gh<Owner>(`/users/${login}`, 86400)
 }
 
+/** Exact repository lookup. This uses the generous core quota, not search. */
+export async function getRepo(owner: string, repo: string): Promise<Repo | null> {
+  if (!/^[a-zA-Z0-9-]{1,39}$/.test(owner) || !/^[a-zA-Z0-9._-]+$/.test(repo)) return null
+  return gh<Repo>(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, 3600)
+}
+
 /**
  * Owners whose login contains the fragment. Two pages deep because GitHub orders
  * by its own relevance, not by login length — the shortest login that matches

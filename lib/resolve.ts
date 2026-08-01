@@ -1,6 +1,7 @@
 import { compareScored, matchKind, score, type MatchKind, type Scored } from "@/lib/fuzzy"
 import {
   getOwner,
+  getRepo,
   listRepos,
   popularOwners,
   RateLimited,
@@ -32,6 +33,10 @@ export type Resolution =
   | { status: "miss"; query: string; reason: string }
   | { status: "rate-limited"; query: string; reason: string }
 
+export type ShortestPathResult =
+  | { status: "ok"; owner: string; repo: string; path: string; fullName: string; limited?: true }
+  | { status: "miss"; reason: string }
+
 /** Owners whose repo list gets fetched per pass. Each costs one cheap REST call. */
 const MAX_OWNERS_EXAMINED = 30
 /** Extra owners pulled in purely for having short logins, whatever their match kind. */
@@ -44,6 +49,45 @@ const SEARCH_BATCH = 12
 const SEARCH_CONCURRENCY = 6
 
 type ScoredOwner = { owner: Owner; s: Scored }
+type RankedPair = { hit: RepoHit; rankSum: number; totalLength: number }
+
+type PairMatchOptions = {
+  /** When shortening, stop as soon as this repository can no longer win. */
+  expectedTarget?: string
+  /** Repository search has a much smaller quota than ordinary REST requests. */
+  allowRepoSearch?: boolean
+}
+
+function comparePairs(a: RankedPair, b: RankedPair): number {
+  if (a.rankSum !== b.rankSum) return a.rankSum - b.rankSum
+  if (a.totalLength !== b.totalLength) return a.totalLength - b.totalLength
+  if (a.hit.stars !== b.hit.stars) return b.hit.stars - a.hit.stars
+  return a.hit.fullName.localeCompare(b.hit.fullName)
+}
+
+function orderedPairs(pairs: Map<string, RankedPair>): RankedPair[] {
+  return [...pairs.values()].sort(comparePairs)
+}
+
+function pairResult(pairs: Map<string, RankedPair>): { match: RepoHit; alternates: RepoHit[] } | null {
+  const ordered = orderedPairs(pairs)
+  if (!ordered.length) return null
+  return { match: ordered[0].hit, alternates: ordered.slice(1, 7).map((pair) => pair.hit) }
+}
+
+/**
+ * Whether an owner could beat the current best pair even with an exact,
+ * shortest-possible repository match. This safely removes owners for which a
+ * wide GitHub repository search cannot affect the result.
+ */
+function canPossiblyBeat(cand: ScoredOwner, repoFragment: string, best: RankedPair): boolean {
+  const bestPossibleRank = cand.s.rank
+  if (bestPossibleRank !== best.rankSum) return bestPossibleRank < best.rankSum
+
+  const normalizedRepoLength = repoFragment.replace(/[._-]/g, "").length
+  const bestPossibleLength = cand.owner.login.length + normalizedRepoLength
+  return bestPossibleLength <= best.totalLength
+}
 
 async function rankOwners(fragment: string, includePopular: boolean): Promise<ScoredOwner[]> {
   const pool = new Map<string, Owner>()
@@ -130,9 +174,13 @@ async function bestPairMatch(
   owners: ScoredOwner[],
   repoFragment: string,
   seen: Set<string>,
+  options: PairMatchOptions = {},
 ): Promise<{ match: RepoHit; alternates: RepoHit[] } | null> {
   const byLogin = new Map(owners.map((c) => [c.owner.login.toLowerCase(), c]))
-  const pairs = new Map<string, { hit: RepoHit; rankSum: number; totalLength: number }>()
+  const pairs = new Map<string, RankedPair>()
+  const expectedTarget = options.expectedTarget?.toLowerCase()
+  const expectedOwner = expectedTarget?.split("/", 1)[0]
+  const allowRepoSearch = options.allowRepoSearch ?? true
 
   const addPair = (cand: ScoredOwner, repo: Repo, s: Scored) => {
     const key = repo.full_name.toLowerCase()
@@ -164,7 +212,7 @@ async function bestPairMatch(
         if (!ranked.length && repos.length >= 100) {
           repos = await listRepos(cand.owner.login, 3)
           ranked = rankRepos(repoFragment, repos)
-          if (!ranked.length && repos.length >= 300) {
+          if (allowRepoSearch && !ranked.length && repos.length >= 300) {
             ranked = rankRepos(repoFragment, await searchRepos(cand.owner.login, repoFragment))
           }
         }
@@ -176,15 +224,46 @@ async function bestPairMatch(
     }
   }
 
+  // During shortening the target repository is known. If its owner was fully
+  // examined and the target is absent or already loses, a wide search can only
+  // add more competitors; it can never make the target become the winner.
+  const targetOwnerWasDeep = Boolean(
+    expectedOwner && deep.some((cand) => cand.owner.login.toLowerCase() === expectedOwner),
+  )
+  if (expectedTarget && targetOwnerWasDeep) {
+    const targetPair = pairs.get(expectedTarget)
+    const best = orderedPairs(pairs)[0]
+    if (!targetPair || (best && comparePairs(best, targetPair) < 0)) return pairResult(pairs)
+  }
+
   // Pass 2 (wide): every remaining owner, ~12 per search request. Catches the
   // owner that ranks 40th on login length but holds the tightest repo match —
   // `maazghani/ksailnet` for `maaz/ks` — without a fetch per owner.
-  const rest = owners
+  let rest = owners
     .filter((c) => !deep.some((d) => d.owner.login.toLowerCase() === c.owner.login.toLowerCase()))
     .slice(0, MAX_OWNERS_SEARCHED)
 
-  for (let i = 0; i < rest.length; i += SEARCH_BATCH * SEARCH_CONCURRENCY) {
-    const window = rest.slice(i, i + SEARCH_BATCH * SEARCH_CONCURRENCY)
+  const bestAfterDeep = orderedPairs(pairs)[0]
+  if (bestAfterDeep) rest = rest.filter((cand) => canPossiblyBeat(cand, repoFragment, bestAfterDeep))
+
+  // Search the target owner's chunk first. If it cannot produce the target,
+  // or produces a target that already loses, no later chunk can rescue it.
+  if (expectedOwner) {
+    rest.sort((a, b) => {
+      const aTarget = a.owner.login.toLowerCase() === expectedOwner ? 0 : 1
+      const bTarget = b.owner.login.toLowerCase() === expectedOwner ? 0 : 1
+      return aTarget - bTarget
+    })
+  }
+
+  // A shortener request values quota conservation over fan-out. One chunk at a
+  // time lets it stop immediately when a newly found competitor beats the
+  // target; ordinary resolver requests retain their wider concurrency.
+  const searchConcurrency = expectedTarget ? 1 : SEARCH_CONCURRENCY
+  let targetOwnerWasSearched = targetOwnerWasDeep
+
+  for (let i = 0; i < rest.length; i += SEARCH_BATCH * searchConcurrency) {
+    const window = rest.slice(i, i + SEARCH_BATCH * searchConcurrency)
     const chunks: ScoredOwner[][] = []
     for (let j = 0; j < window.length; j += SEARCH_BATCH) chunks.push(window.slice(j, j + SEARCH_BATCH))
 
@@ -196,20 +275,18 @@ async function bestPairMatch(
       const s = score(repoFragment, repos.name)
       if (cand && s) addPair(cand, repos, s)
     }
+
+    if (expectedOwner && window.some((cand) => cand.owner.login.toLowerCase() === expectedOwner)) {
+      targetOwnerWasSearched = true
+    }
+    if (expectedTarget && targetOwnerWasSearched) {
+      const targetPair = pairs.get(expectedTarget)
+      const best = orderedPairs(pairs)[0]
+      if (!targetPair || (best && comparePairs(best, targetPair) < 0)) return pairResult(pairs)
+    }
   }
 
-  if (!pairs.size) return null
-
-  // Ranking order, strictly: match tightness, then fewest total characters, then
-  // stars purely to break exact ties. No popularity boost, no fork/archive penalty.
-  const ordered = [...pairs.values()].sort((a, b) => {
-    if (a.rankSum !== b.rankSum) return a.rankSum - b.rankSum
-    if (a.totalLength !== b.totalLength) return a.totalLength - b.totalLength
-    if (a.hit.stars !== b.hit.stars) return b.hit.stars - a.hit.stars
-    return a.hit.fullName.localeCompare(b.hit.fullName)
-  })
-
-  return { match: ordered[0].hit, alternates: ordered.slice(1, 7).map((p) => p.hit) }
+  return pairResult(pairs)
 }
 
 export async function resolvePath(ownerFragment: string, repoFragment?: string): Promise<Resolution> {
@@ -222,6 +299,20 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
   }
 
   try {
+    // An exact owner/repository pair is unbeatable. Resolve it from the core
+    // REST quota and avoid the much tighter search quota entirely.
+    if (repoFragment) {
+      const exact = await getRepo(ownerFragment, repoFragment)
+      if (exact) {
+        return {
+          status: "hit",
+          query,
+          match: toHit(exact, "exact", "exact"),
+          alternates: [],
+        }
+      }
+    }
+
     // Two-segment queries always consider the well-known-owner pool up front:
     // GitHub's index can't return `openai` for `oai`, and if that candidate only
     // showed up after every `oai*` owner failed, `oaix/musicbox` would win a
@@ -282,30 +373,48 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
 export async function shortestPath(
   ownerName: string,
   repoName: string,
-): Promise<{ status: "ok"; owner: string; repo: string; path: string; fullName: string } | { status: "miss"; reason: string }> {
+): Promise<ShortestPathResult> {
   const target = `${ownerName}/${repoName}`.toLowerCase()
+  let exactRepo: Repo | null = null
 
-  for (let oLen = 1; oLen <= Math.min(ownerName.length, 12); oLen++) {
-    const ownerFrag = ownerName.slice(0, oLen)
-    let ranked: ScoredOwner[]
-    try {
-      ranked = await rankOwners(ownerFrag, false)
+  try {
+    exactRepo = await getRepo(ownerName, repoName)
+    if (!exactRepo) return { status: "miss", reason: `GitHub repository ${ownerName}/${repoName} was not found.` }
+
+    for (let oLen = 1; oLen <= Math.min(ownerName.length, 12); oLen++) {
+      const ownerFrag = ownerName.slice(0, oLen)
+      let ranked = await rankOwners(ownerFrag, false)
       if (!ranked.some((c) => c.owner.login.toLowerCase() === ownerName.toLowerCase())) {
         ranked = await rankOwners(ownerFrag, true)
       }
-    } catch (err) {
-      if (err instanceof RateLimited) return { status: "miss", reason: "GitHub API rate limit reached." }
-      throw err
-    }
-    if (!ranked.some((c) => c.owner.login.toLowerCase() === ownerName.toLowerCase())) continue
+      if (!ranked.some((c) => c.owner.login.toLowerCase() === ownerName.toLowerCase())) continue
 
-    for (let rLen = 1; rLen <= repoName.length; rLen++) {
-      const repoFrag = repoName.slice(0, rLen)
-      const result = await bestPairMatch(ranked, repoFrag, new Set())
-      if (result && result.match.fullName.toLowerCase() === target) {
-        return { status: "ok", owner: ownerFrag, repo: repoFrag, path: `${ownerFrag}/${repoFrag}`, fullName: result.match.fullName }
+      for (let rLen = 1; rLen <= repoName.length; rLen++) {
+        const repoFrag = repoName.slice(0, rLen)
+        const result = await bestPairMatch(ranked, repoFrag, new Set(), {
+          expectedTarget: target,
+          allowRepoSearch: false,
+        })
+        if (result && result.match.fullName.toLowerCase() === target) {
+          return { status: "ok", owner: ownerFrag, repo: repoFrag, path: `${ownerFrag}/${repoFrag}`, fullName: result.match.fullName }
+        }
       }
     }
+  } catch (err) {
+    if (err instanceof RateLimited) {
+      if (exactRepo) {
+        return {
+          status: "ok",
+          owner: exactRepo.owner.login,
+          repo: exactRepo.name,
+          path: exactRepo.full_name,
+          fullName: exactRepo.full_name,
+          limited: true,
+        }
+      }
+      return { status: "miss", reason: "GitHub API rate limit reached. Try again in a minute." }
+    }
+    throw err
   }
 
   return { status: "miss", reason: `Could not find a shorter unambiguous link than ${ownerName}/${repoName}` }
