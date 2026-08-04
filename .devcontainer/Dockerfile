@@ -1,9 +1,21 @@
-ARG VARIANT=22-bookworm
-
-FROM mcr.microsoft.com/devcontainers/javascript:1-${VARIANT}
-
+ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.14.0
 
-RUN npm install --global "pnpm@${PNPM_VERSION}"
+FROM node:${NODE_VERSION}-bookworm
+
+ARG PNPM_VERSION
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        make \
+        g++ \
+        python3 \
+    && npm install --global "pnpm@${PNPM_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /workspaces
