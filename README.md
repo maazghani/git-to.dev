@@ -39,8 +39,8 @@ docker run --rm -p 3000:3000 -e GITHUB_TOKEN git-to-dev
 
 Open the repository in a [Development Containers](https://containers.dev/)
 compatible editor and choose **Reopen in Container**. The development container
-builds the `development` target from the same `Dockerfile`, installs the locked
-dependencies, and forwards port 3000. Start the app from its terminal with:
+uses its own Node.js and pnpm image, installs the locked dependencies, and
+forwards port 3000. Start the app from its terminal with:
 
 ```bash
 pnpm dev
