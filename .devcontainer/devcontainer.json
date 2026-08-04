@@ -6,9 +6,6 @@
   },
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "remoteUser": "node",
-  "mounts": [
-    "source=${localWorkspaceFolderBasename}-node_modules,target=/workspaces/${localWorkspaceFolderBasename}/node_modules,type=volume"
-  ],
   "forwardPorts": [3000],
   "portsAttributes": {
     "3000": {
