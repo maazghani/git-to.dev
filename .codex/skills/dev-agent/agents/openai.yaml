@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dev Agent"
+  short_description: "Test-first repo development guardrails"
+  default_prompt: "Use $dev-agent to make a small, test-first change in this repository."
