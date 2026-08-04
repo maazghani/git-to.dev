@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+// Prevent any real Redis calls during unit tests.
+vi.mock("@/lib/cache", () => ({
+  getCachedResolution: vi.fn().mockResolvedValue(null),
+  setCachedResolution: vi.fn().mockResolvedValue(undefined),
+  resolutionCacheKey: (q: string) => `resolution:${q.toLowerCase()}`,
+}))
+
 import {
   getOwner,
   getRepo,

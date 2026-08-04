@@ -11,6 +11,7 @@ import {
   type Owner,
   type Repo,
 } from "@/lib/github"
+import { getCachedResolution, setCachedResolution } from "@/lib/cache"
 
 export type RepoHit = {
   owner: string
@@ -298,18 +299,26 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
     return { status: "miss", query, reason: "Invalid repo fragment" }
   }
 
+  // Only cache two-segment "hit" resolutions — single-owner and error responses are intentionally excluded.
+  if (repoFragment) {
+    const cached = await getCachedResolution<Resolution>(query)
+    if (cached) return cached
+  }
+
   try {
     // An exact owner/repository pair is unbeatable. Resolve it from the core
     // REST quota and avoid the much tighter search quota entirely.
     if (repoFragment) {
       const exact = await getRepo(ownerFragment, repoFragment)
       if (exact) {
-        return {
+        const resolution: Resolution = {
           status: "hit",
           query,
           match: toHit(exact, "exact", "exact"),
           alternates: [],
         }
+        await setCachedResolution(query, resolution)
+        return resolution
       }
     }
 
@@ -353,7 +362,9 @@ export async function resolvePath(ownerFragment: string, repoFragment?: string):
     if (!result) {
       return { status: "miss", query, reason: `No repo matches "${query}"` }
     }
-    return { status: "hit", query, match: result.match, alternates: result.alternates }
+    const resolution: Resolution = { status: "hit", query, match: result.match, alternates: result.alternates }
+    await setCachedResolution(query, resolution)
+    return resolution
   } catch (err) {
     if (err instanceof RateLimited) {
       return {
