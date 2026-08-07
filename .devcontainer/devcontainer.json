@@ -1,20 +1,32 @@
 {
   "name": "git-to.dev",
   "build": {
-    "dockerfile": "../Dockerfile",
-    "context": "..",
-    "target": "development"
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "args": {
+      "NODE_VERSION": "22",
+      "PNPM_VERSION": "10.14.0"
+    }
   },
   "workspaceFolder": "/workspace/${localWorkspaceFolderBasename}",
   "remoteUser": "node",
-  "forwardPorts": [3000],
+  "containerEnv": {
+    "NEXT_TELEMETRY_DISABLED": "1"
+  },
+  "mounts": [
+    "type=volume,source=git-to-dev-pnpm-store,target=/pnpm/store"
+  ],
+  "forwardPorts": [
+    3000
+  ],
   "portsAttributes": {
     "3000": {
       "label": "Next.js development server",
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "pnpm install --frozen-lockfile",
+  "postCreateCommand": "pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile",
+  "postAttachCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
   "customizations": {
     "vscode": {
       "extensions": [
